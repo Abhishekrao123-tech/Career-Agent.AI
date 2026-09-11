@@ -39,7 +39,7 @@ const studentProfileSchema = new mongoose.Schema(
       default: [],
     },
   },
-  { timestamps: true, bufferCommands: false },
+  { timestamps: true }
 );
 
 export default mongoose.model("StudentProfile", studentProfileSchema);

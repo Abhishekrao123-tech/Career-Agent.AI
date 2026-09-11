@@ -23,6 +23,35 @@ function enableInMemoryEngine() {
   });
   mongoose.connection.host = 'in-memory-engine';
 
+  const originalSave = mongoose.Model.prototype.save;
+  mongoose.Model.prototype.save = function () {
+    if (mongoose.connection.host && mongoose.connection.host !== 'in-memory-engine') {
+      return originalSave.call(this);
+    }
+    const store = getCollection(this.constructor.collection.name);
+    if (!this._id) this._id = new mongoose.Types.ObjectId();
+    const existingIdx = store.findIndex((item) => item._id?.toString() === this._id.toString());
+    const docObj = this.toObject ? this.toObject() : { ...this };
+    if (existingIdx >= 0) {
+      store[existingIdx] = { ...store[existingIdx], ...docObj, updatedAt: new Date() };
+    } else {
+      store.push({ ...docObj, createdAt: new Date(), updatedAt: new Date() });
+    }
+    return Promise.resolve(this);
+  };
+
+  const matchesFilter = (item, filter = {}) => {
+    return Object.keys(filter).every((k) => {
+      const itemVal = item[k];
+      const filterVal = filter[k];
+      if (itemVal == null || filterVal == null) return itemVal === filterVal;
+      if (typeof itemVal === 'object' || typeof filterVal === 'object') {
+        return itemVal.toString() === filterVal.toString();
+      }
+      return itemVal === filterVal;
+    });
+  };
+
   const patchModel = (model) => {
     if (model.__isPatchedForInMemory) return;
     model.__isPatchedForInMemory = true;
@@ -34,14 +63,7 @@ function enableInMemoryEngine() {
         return originalFindOne(filter);
       }
       const store = getCollection(collName);
-      const doc = store.find((item) => {
-        return Object.keys(filter).every((k) => {
-          if (filter[k] && typeof filter[k] === 'object' && filter[k].toString) {
-            return item[k]?.toString() === filter[k].toString();
-          }
-          return item[k] === filter[k];
-        });
-      });
+      const doc = store.find((item) => matchesFilter(item, filter));
       return Promise.resolve(doc ? new model(doc) : null);
     };
 
@@ -51,14 +73,7 @@ function enableInMemoryEngine() {
         return originalFind(filter);
       }
       const store = getCollection(collName);
-      const matches = store.filter((item) => {
-        return Object.keys(filter).every((k) => {
-          if (filter[k] && typeof filter[k] === 'object' && filter[k].toString) {
-            return item[k]?.toString() === filter[k].toString();
-          }
-          return item[k] === filter[k];
-        });
-      });
+      const matches = store.filter((item) => matchesFilter(item, filter));
       return Promise.resolve(matches.map((m) => new model(m)));
     };
 
@@ -94,14 +109,7 @@ function enableInMemoryEngine() {
         return originalFindOneAndUpdate(filter, update, options);
       }
       const store = getCollection(collName);
-      let index = store.findIndex((item) => {
-        return Object.keys(filter).every((k) => {
-          if (filter[k] && typeof filter[k] === 'object' && filter[k].toString) {
-            return item[k]?.toString() === filter[k].toString();
-          }
-          return item[k] === filter[k];
-        });
-      });
+      let index = store.findIndex((item) => matchesFilter(item, filter));
 
       const updateData = update.$set ? update.$set : update;
 
@@ -123,6 +131,32 @@ function enableInMemoryEngine() {
       store[index] = { ...store[index], ...updateData, updatedAt: new Date() };
       return Promise.resolve(new model(store[index]));
     };
+
+    const originalDeleteMany = model.deleteMany.bind(model);
+    model.deleteMany = function (filter = {}) {
+      if (mongoose.connection.host && mongoose.connection.host !== 'in-memory-engine') {
+        return originalDeleteMany(filter);
+      }
+      const store = getCollection(collName);
+      const remaining = store.filter((item) => !matchesFilter(item, filter));
+      inMemoryCollections.set(collName, remaining);
+      return Promise.resolve({ acknowledged: true, deletedCount: store.length - remaining.length });
+    };
+
+    const originalInsertMany = model.insertMany.bind(model);
+    model.insertMany = function (docs = []) {
+      if (mongoose.connection.host && mongoose.connection.host !== 'in-memory-engine') {
+        return originalInsertMany(docs);
+      }
+      const store = getCollection(collName);
+      const created = docs.map((d) => {
+        const _id = d._id || new mongoose.Types.ObjectId();
+        const fullDoc = { ...d, _id, createdAt: new Date(), updatedAt: new Date() };
+        store.push(fullDoc);
+        return new model(fullDoc);
+      });
+      return Promise.resolve(created);
+    };
   };
 
   Object.values(mongoose.models).forEach(patchModel);
@@ -135,7 +169,6 @@ function enableInMemoryEngine() {
 }
 
 export const connectDB = async () => {
-  mongoose.set('bufferCommands', false);
 
   if (mongoose.connection.readyState === 1) {
     return mongoose.connection;
@@ -155,27 +188,9 @@ export const connectDB = async () => {
       console.log(`[MongoDB] Connected to MongoDB: ${conn.connection.host}`);
       return conn;
     } catch (err) {
-      console.warn(`[MongoDB] Connection to ${connUri} failed (${err.message}). Trying MongoMemoryServer fallback...`);
-      try {
-        if (!mongoServerInstance) {
-          const { MongoMemoryServer } = await import('mongodb-memory-server');
-          mongoServerInstance = await Promise.race([
-            MongoMemoryServer.create({
-              instance: { dbName: 'ai-career-roadmap' },
-              downloadDir: process.env.VERCEL ? '/tmp' : undefined
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('MongoMemoryServer startup timeout')), 2500))
-          ]);
-        }
-        const mongoUri = mongoServerInstance.getUri();
-        const conn = await mongoose.connect(mongoUri);
-        console.log(`[MongoDB] Connected to MongoMemoryServer: ${conn.connection.host}`);
-        return conn;
-      } catch (fallbackErr) {
-        console.warn(`[MongoDB] Memory server fallback failed (${fallbackErr.message}). Activating zero-latency in-memory engine...`);
-        enableInMemoryEngine();
-        return mongoose.connection;
-      }
+      console.warn(`[MongoDB] Connection to ${connUri} failed (${err.message}). Activating zero-latency in-memory engine...`);
+      enableInMemoryEngine();
+      return mongoose.connection;
     }
   })();
 

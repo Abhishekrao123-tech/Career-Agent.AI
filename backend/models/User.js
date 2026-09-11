@@ -19,7 +19,7 @@ const userSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true, bufferCommands: false },
+  { timestamps: true }
 );
 
 export default mongoose.model("User", userSchema);
