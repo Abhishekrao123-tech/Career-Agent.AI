@@ -1,0 +1,10 @@
+{
+  "name": "ai-career-roadmap-agent",
+  "version": "1.0.0",
+  "description": "AI Career Roadmap Agent full-stack web application for college students",
+  "scripts": {
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm run dev",
+    "test:backend": "cd backend && npm test"
+  }
+}
