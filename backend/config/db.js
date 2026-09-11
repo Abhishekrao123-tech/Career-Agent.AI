@@ -1,29 +1,57 @@
 import mongoose from 'mongoose';
 
+let mongoServerInstance = null;
+let connectionPromise = null;
+
 export const connectDB = async () => {
-  const connUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/ai-career-roadmap';
-  
-  try {
-    // Attempt standard connection with 3 sec timeout
-    const conn = await mongoose.connect(connUri, {
-      serverSelectionTimeoutMS: 3000
-    });
-    console.log(`[MongoDB] Connected to MongoDB: ${conn.connection.host}`);
-  } catch (err) {
-    console.warn(`[MongoDB] Local connection to ${connUri} failed: ${err.message}. Initializing Memory Server fallback...`);
+  // Disable query buffering so Mongoose fails fast with descriptive errors if DB is disconnected
+  mongoose.set('bufferCommands', false);
+
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
+  if (connectionPromise) {
+    return connectionPromise;
+  }
+
+  connectionPromise = (async () => {
+    const connUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/ai-career-roadmap';
+
     try {
-      const { MongoMemoryServer } = await import('mongodb-memory-server');
-      const mongoServer = await MongoMemoryServer.create({
-        downloadDir: process.env.VERCEL ? '/tmp' : undefined
+      // Attempt standard connection with 2.5 sec timeout
+      const conn = await mongoose.connect(connUri, {
+        serverSelectionTimeoutMS: 2500
       });
-      const mongoUri = mongoServer.getUri();
-      const conn = await mongoose.connect(mongoUri);
-      console.log(`[MongoDB] Connected to MongoMemoryServer: ${conn.connection.host}`);
-    } catch (fallbackErr) {
-      console.error('[MongoDB] Memory server fallback failed:', fallbackErr.message);
-      if (!process.env.VERCEL) {
-        process.exit(1);
+      console.log(`[MongoDB] Connected to MongoDB: ${conn.connection.host}`);
+      return conn;
+    } catch (err) {
+      console.warn(`[MongoDB] Connection to ${connUri} failed (${err.message}). Initializing MongoMemoryServer fallback...`);
+      try {
+        if (!mongoServerInstance) {
+          const { MongoMemoryServer } = await import('mongodb-memory-server');
+          mongoServerInstance = await MongoMemoryServer.create({
+            instance: { dbName: 'ai-career-roadmap' },
+            downloadDir: process.env.VERCEL ? '/tmp' : undefined
+          });
+        }
+        const mongoUri = mongoServerInstance.getUri();
+        const conn = await mongoose.connect(mongoUri);
+        console.log(`[MongoDB] Connected to MongoMemoryServer: ${conn.connection.host}`);
+        return conn;
+      } catch (fallbackErr) {
+        console.error('[MongoDB] Memory server fallback failed:', fallbackErr.message);
+        throw fallbackErr;
       }
     }
+  })();
+
+  try {
+    const result = await connectionPromise;
+    return result;
+  } catch (err) {
+    connectionPromise = null;
+    throw err;
   }
 };
+

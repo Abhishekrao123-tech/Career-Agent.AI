@@ -19,14 +19,19 @@ const app = express();
 import mongoose from 'mongoose';
 
 // DB Auto-connect Middleware for Serverless / Direct requests
-let isConnected = false;
 app.use(async (req, res, next) => {
-  if (req.path !== '/api/health' && !isConnected && mongoose.connection.readyState === 0) {
+  if (req.path === '/api/health') {
+    return next();
+  }
+
+  if (mongoose.connection.readyState !== 1) {
     try {
       await connectDB();
-      isConnected = true;
     } catch (err) {
-      console.error('[DB Middleware] Connection failed:', err);
+      console.error('[DB Middleware] Connection failed:', err.message);
+      return res.status(503).json({
+        message: 'Database connection failed. Please ensure MongoDB is running or MONGO_URI is configured correctly.'
+      });
     }
   }
   next();
