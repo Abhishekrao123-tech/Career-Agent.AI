@@ -1,45 +1,45 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const studentProfileSchema = new mongoose.Schema(
   {
     userId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
-      unique: true
+      unique: true,
     },
     targetCareer: {
       type: String,
       required: true,
-      default: 'Full Stack Developer'
+      default: "Full Stack Developer",
     },
     experienceLevel: {
       type: String,
-      enum: ['Beginner', 'Intermediate', 'Advanced'],
-      default: 'Beginner'
+      enum: ["Beginner", "Intermediate", "Advanced"],
+      default: "Beginner",
     },
     dailyStudyHours: {
       type: Number,
-      default: 2
+      default: 2,
     },
     roadmapDuration: {
       type: String,
-      default: '4 months'
+      default: "4 months",
     },
     interests: {
       type: [String],
-      default: []
+      default: [],
     },
     skills: {
       type: [String],
-      default: []
+      default: [],
     },
     weakAreas: {
       type: [String],
-      default: []
-    }
+      default: [],
+    },
   },
-  { timestamps: true }
+  { timestamps: true, bufferCommands: false },
 );
 
-export default mongoose.model('StudentProfile', studentProfileSchema);
+export default mongoose.model("StudentProfile", studentProfileSchema);
